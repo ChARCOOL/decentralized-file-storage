@@ -1,87 +1,123 @@
-//import DStorage from '../abis/DStorage.json'
-import React, { Component } from 'react';
+import React, { useState, useEffect } from 'react'
 import Navbar from './Navbar'
 import Main from './Main'
-import Web3 from 'web3';
-import './App.css';
+import Web3 from 'web3'
+import './App.css'
+import DStorage from '../abis/DStorage.json'
+import { create } from 'ipfs-http-client'
 
-//Declare IPFS
+const ipfs = create({ host: 'ipfs.infura.io', port: 5001, protocol: 'https' })
 
-class App extends Component {
+const App = () => {
+	const [account, setAccount] = useState('')
+	const [loading, setLoading] = useState('')
+	const [files, setFiles] = useState([])
+	const [dstorage, setDstorage] = useState('')
+	const [buffer, setBuffer] = useState('')
+	const [type, setType] = useState('')
+	const [name, setName] = useState('')
 
-  async componentWillMount() {
-    await this.loadWeb3()
-    await this.loadBlockchainData()
-  }
+	useEffect(() => {
+		const load = async () => {
+			await loadWeb3()
+			await loadBlockchainData()
+		}
 
-  async loadWeb3() {
-    //Setting up Web3
-  }
+		load()
+	}, [])
 
-  async loadBlockchainData() {
-    //Declare Web3
+	const loadWeb3 = async () => {
+		if (window.ethereum) {
+			window.web3 = new Web3(window.ethereum)
+			await window.ethereum.request({ method: 'eth_requestAccounts' })
+		} else if (window.web3) {
+			window.web3 = new Web3(window.web3.currentProvider)
+		} else {
+			window.alert('Non-Ethereum browser detected. You should consider trying MetaMask!')
+		}
+	}
 
-    //Load account
+	const loadBlockchainData = async () => {
+		setLoading(true)
 
-    //Network ID
+		const web3 = window.web3
 
-    //IF got connection, get data from contracts
-      //Assign contract
+		const accounts = await web3.eth.getAccounts()
+		setAccount(accounts[0])
 
-      //Get files amount
+		const networkId = await web3.eth.net.getId()
+		const networkData = DStorage.networks[networkId]
 
-      //Load files&sort by the newest
+		if (networkData) {
+			const dstorage = new web3.eth.Contract(DStorage.abi, networkData.address)
+			setDstorage(dstorage)
 
-    //Else
-      //alert Error
+			const filesCount = await dstorage.methods.fileCount().call()
 
-  }
+			for (let i = filesCount; i >= 1; i--) {
+				const file = await dstorage.methods.files(i).call()
+				setFiles((files) => [...files, file])
+			}
+		} else {
+			window.alert('DStorage contract not deployed to detect network')
+		}
+		setLoading(false)
+	}
 
-  // Get file from user
-  captureFile = event => {
-  }
+	const captureFile = (event) => {
+		event.preventDefault()
 
+		const file = event.target.files[0]
+		const reader = new window.FileReader()
 
-  //Upload File
-  uploadFile = description => {
+		reader.readAsArrayBuffer(file)
+		reader.onloadend = () => {
+			setBuffer(Buffer(reader.result))
+			setType(file.type)
+			setName(file.name)
+		}
+	}
 
-    //Add file to the IPFS
+	const uploadFile = async (description) => {
+		try {
+			const result = await ipfs.add(buffer)
 
-      //Check If error
-        //Return error
+			if (type === '') {
+				setType('none')
+			}
 
-      //Set state to loading
+			console.log(result)
 
-      //Assign value for the file without extension
+			dstorage.methods
+				.uploadFile(result.path, result.size, type, name, description)
+				.send({ from: account })
+				.on('transactionHash', (hash) => {
+					setLoading(false)
+					setType('')
+					setName('')
+					window.reload()
+				})
+				.on('error', (event) => {
+					window.alert('Error')
+					setLoading(false)
+				})
+		} catch (error) {
+			console.error(error)
+		}
+	}
 
-      //Call smart contract uploadFile function 
-
-  }
-
-  //Set states
-  constructor(props) {
-    super(props)
-    this.state = {
-    }
-
-    //Bind functions
-  }
-
-  render() {
-    return (
-      <div>
-        <Navbar account={this.state.account} />
-        { this.state.loading
-          ? <div id="loader" className="text-center mt-5"><p>Loading...</p></div>
-          : <Main
-              files={this.state.files}
-              captureFile={this.captureFile}
-              uploadFile={this.uploadFile}
-            />
-        }
-      </div>
-    );
-  }
+	return (
+		<div>
+			<Navbar account={account} />
+			{loading ? (
+				<div id="loader" className="text-center mt-5">
+					<p>Loading...</p>
+				</div>
+			) : (
+				<Main files={files} captureFile={captureFile} uploadFile={uploadFile} />
+			)}
+		</div>
+	)
 }
 
-export default App;
+export default App
